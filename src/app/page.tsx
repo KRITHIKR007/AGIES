@@ -6,7 +6,42 @@ interface Telemetry {
   speed: number;
   alert: string;
   detections: Record<string, number>;
-  coords: Array<{ label: string; conf: number; x1: number; y1: number; x2: number; y2: number; }>;
+  coords: Array<{ 
+    label: string; 
+    conf: number; 
+    x1: number; 
+    y1: number; 
+    x2: number; 
+    y2: number; 
+    depth: number; 
+    behavior: string; 
+  }>;
+  core?: string;
+}
+
+interface SpeechRecognitionEvent {
+  results: {
+    [index: number]: {
+      [index: number]: {
+        transcript: string;
+      };
+    };
+  };
+}
+
+interface ISpeechRecognition {
+  continuous: boolean;
+  interimResults: boolean;
+  onstart: () => void;
+  onresult: (event: SpeechRecognitionEvent) => void;
+  onerror: () => void;
+  onend: () => void;
+  start: () => void;
+}
+
+interface WindowWithSpeech extends Window {
+  SpeechRecognition?: new () => ISpeechRecognition;
+  webkitSpeechRecognition?: new () => ISpeechRecognition;
 }
 
 export default function Home() {
@@ -16,15 +51,18 @@ export default function Home() {
   const [viewMode, setViewMode] = useState("HUD");
   const [focusMode, setFocusMode] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [logs, setLogs] = useState(["[SYS] Booting Augmented Vision OS...", "[SYS] Calibrating YOLOv8 Sensors..."]);
+  const [logs, setLogs] = useState(["[SYS] Booting Augmented Vision OS...", "[SYS] Syncing YOLO26-S Ultra Neural Core..."]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
   const [booting, setBooting] = useState(true);
 
   useEffect(() => {
-    setMounted(true);
+    const mountTimer = setTimeout(() => setMounted(true), 0);
     const timer = setTimeout(() => setBooting(false), 2000);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(mountTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -47,7 +85,7 @@ export default function Home() {
             return newLogs.slice(-20);
           });
         }
-      } catch (e) {
+      } catch {
         // Silently handle backend connection issues
       }
     }, 100); 
@@ -84,28 +122,33 @@ export default function Home() {
       const data = await response.json();
       setMessages([...newMessages, { sender: "AI", text: data.response }]);
       speak(data.response);
-    } catch (e) {
+    } catch {
       setMessages([...newMessages, { sender: "AI", text: "SIGNAL INTERRUPTED." }]);
     }
   };
 
   const startListening = () => {
-    if (typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
+    if (typeof window !== "undefined") {
+      const win = window as unknown as WindowWithSpeech;
+      if (win.SpeechRecognition || win.webkitSpeechRecognition) {
+        const SpeechRecognition = win.SpeechRecognition || win.webkitSpeechRecognition;
+        if (!SpeechRecognition) return;
+        
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
 
-      recognition.onstart = () => setIsListening(true);
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setInput(transcript);
-        sendMessage(transcript);
-      };
-      recognition.onerror = () => setIsListening(false);
-      recognition.onend = () => setIsListening(false);
+        recognition.onstart = () => setIsListening(true);
+        recognition.onresult = (event: SpeechRecognitionEvent) => {
+          const transcript = event.results[0][0].transcript;
+          setInput(transcript);
+          sendMessage(transcript);
+        };
+        recognition.onerror = () => setIsListening(false);
+        recognition.onend = () => setIsListening(false);
 
-      recognition.start();
+        recognition.start();
+      }
     }
   };
 
@@ -245,10 +288,11 @@ export default function Home() {
           <section className={`flex-1 relative bg-black/90 border border-white/5 overflow-hidden transition-all duration-1000 ${focusMode ? "border-amber-500/20" : ""}`}>
             {viewMode === "HUD" ? (
               <div className="w-full h-full relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img 
                   src="http://127.0.0.1:5000/video_feed" 
                   alt="Primary Sensor" 
-                  className="w-full h-full object-cover opacity-90 brightness-110 contrast-125" 
+                  className="absolute inset-0 w-full h-full object-cover opacity-90 brightness-110 contrast-125" 
                 />
                 
                 {/* Visual Enhancers */}
@@ -284,13 +328,20 @@ export default function Home() {
                              {Math.round((box.conf || 0) * 100)}%
                            </span>
                         </div>
-                        <div className="text-[6px] text-cyan-500/50 font-black tracking-widest pl-0.5 uppercase">Locked</div>
+                        <div className="flex gap-1 mt-0.5">
+                           <div className={`text-[6px] px-1 py-0.5 font-black tracking-widest uppercase ${box.behavior === 'APPROACHING' ? 'bg-red-500 text-white' : 'bg-cyan-500/20 text-cyan-500'}`}>
+                             {box.behavior}
+                           </div>
+                           <div className="text-[6px] px-1 py-0.5 bg-black/40 text-white border border-white/10">
+                             {box.depth}m
+                           </div>
+                        </div>
                       </div>
                       
                       {/* Auxiliary Telemetry */}
                       <div className="absolute bottom-1 right-1 text-right mix-blend-difference">
                         <div className="text-[9px] font-black text-white tracking-widest">
-                          {Math.round(40 / (box.x2 - box.x1) * 10) / 10}m
+                           TRK_{100 + i}
                         </div>
                       </div>
                     </div>
@@ -345,7 +396,7 @@ export default function Home() {
                       { l: "IDENTIFIED_ENTITIES", v: detectionsArray.length, sub: "TRACKED" },
                       { l: "CURRENT_VELOCITY", v: telemetry.speed, sub: "MPH" },
                       { l: "THREAT_COEFFICIENT", v: isDanger ? "CRITICAL" : isWarning ? "ELEVATED" : "ZERO", sub: "AUTO_DET" }
-                    ].map((st, i) => (
+                    ].map((st) => (
                       <div key={st.l} className="border-l-4 border-cyan-500 bg-cyan-950/20 p-8 transition-transform hover:scale-[1.02]">
                         <div className="text-[9px] font-black tracking-[0.5em] text-cyan-800 mb-4">{st.l}</div>
                         <div className="text-6xl font-black text-white mb-2">{st.v}</div>
